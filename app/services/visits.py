@@ -458,6 +458,8 @@ def set_row_status(row_id: int, status: str, db_path: str | None = None) -> dict
 
 
 def ingest_ok_rows(batch_id: int, db_path: str | None = None) -> dict:
+    from app.services.collision_gate import assert_ingest_allowed
+
     with get_db(db_path) as conn:
         batch = conn.execute(
             "SELECT * FROM visit_batches WHERE id=?", (batch_id,)
@@ -466,6 +468,15 @@ def ingest_ok_rows(batch_id: int, db_path: str | None = None) -> dict:
             raise ServiceError("访视批次不存在", 404)
         if batch["status"] == "已关闭":
             raise ServiceError("已关闭批次不能入库")
+        candidates = conn.execute(
+            """
+            SELECT * FROM visit_rows
+            WHERE batch_id=? AND quality='合格' AND status='待检'
+            """,
+            (batch_id,),
+        ).fetchall()
+        for row in candidates:
+            assert_ingest_allowed(conn, row)
         cur = conn.execute(
             """
             UPDATE visit_rows

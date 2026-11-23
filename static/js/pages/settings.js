@@ -66,35 +66,33 @@ export async function renderSettings(el) {
   try {
     const dash = await api('/api/collision_gate/dash');
     el.innerHTML += `<div class="card" style="margin-top:1rem">
-      <h3>撞键钉定</h3>
-      <span class="chip">${dash.chip}</span>
-      <p class="muted">读轨 ${dash.active_read} · 切流指纹 ${dash.cutover_fp || '空'} · 拒回刷 ${dash.reject_refresh} · 归档 ${dash.archive_count} · 新旗 ${dash.live_flag || '空'} · 对齐差 ${dash.panel_pack_mismatch}</p>
+      <h3>撞键钉定（甲路·物化包）</h3>
+      <span class="chip ${dash.aligned ? 'ok' : 'bad'}">${dash.chip} / ${dash.truth}</span>
+      <p class="muted">读轨 ${dash.active_read} · 指纹 ${(dash.fingerprint || '空').slice(0, 16)} · 拒回刷 ${dash.reject_refresh} · 镜像次数 ${dash.mirror_count}／钉定 ${dash.pinned_mirror_count} · 落点行 ${dash.landing_row ?? '无'} · 镜像拦截 ${dash.mirror_blocked}</p>
       <div class="row">
-        <button id="go_collision_gate" type="button">落台</button>
-        <button id="half_collision_gate" type="button">半修对齐</button>
+        <button id="go_collision_gate" type="button">撞键钉定</button>
         <button id="cut_collision_gate" type="button">切流账册</button>
-        <button id="dual_collision_gate" type="button">双写两轨</button>
       </div>
+      <div id="gateMsg" class="muted" style="margin-top:8px"></div>
     </div>`;
+    const gateMsg = el.querySelector('#gateMsg');
     const go = el.querySelector('#go_collision_gate');
     if (go) go.onclick = async () => {
-      await api('/api/collision_gate/commit', { method:'POST', body: JSON.stringify({ref:1}) });
-      await renderSettings(el);
-    };
-    const half = el.querySelector('#half_collision_gate');
-    if (half) half.onclick = async () => {
-      await api('/api/collision_gate/half', { method:'POST', body:'{}' });
-      await renderSettings(el);
+      try {
+        await api('/api/collision_gate/commit', { method:'POST', body: JSON.stringify({ref_id:1, note:'台参数页钉定', expect_pin_id: dash.landing_row || 0}) });
+        await renderSettings(el);
+      } catch (e) {
+        if (gateMsg) { gateMsg.className = 'err'; gateMsg.textContent = e.message; }
+      }
     };
     const cut = el.querySelector('#cut_collision_gate');
     if (cut) cut.onclick = async () => {
-      await api('/api/collision_gate/cutover', { method:'POST', body: JSON.stringify({ref_id:1, note:'撞键闸'}) });
-      await renderSettings(el);
-    };
-    const dual = el.querySelector('#dual_collision_gate');
-    if (dual) dual.onclick = async () => {
-      await api('/api/collision_gate/dual', { method:'POST', body: JSON.stringify({note:'撞键闸'}) });
-      await renderSettings(el);
+      try {
+        await api('/api/collision_gate/cutover', { method:'POST', body: JSON.stringify({ref_id:1, note:'撞键闸切流', expect_pin_id: dash.landing_row || 0}) });
+        await renderSettings(el);
+      } catch (e) {
+        if (gateMsg) { gateMsg.className = 'err'; gateMsg.textContent = e.message; }
+      }
     };
   } catch (e) { /* optional surface */ }
 

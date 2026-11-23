@@ -1,15 +1,21 @@
 import { api, chip, escapeHtml } from '../api.js';
 
+const gateChip = (g) => g && g.aligned
+  ? `<span class="chip ok" data-thick="collision_gate">撞键已亮</span>`
+  : `<span class="chip bad" data-thick="collision_gate">镜像次数旧${g && g.landing_row == null ? '·无落点' : ''}</span>`;
+
 export async function renderBackfill(el) {
-  const [jobs, gapRows] = await Promise.all([
+  const [jobs, gapRows, dash] = await Promise.all([
     api('/api/jobs'),
     api('/api/rows?status=' + encodeURIComponent('待补采')),
+    api('/api/dashboard'),
   ]);
+  const gate = dash.collision_gate || {};
   const summary = jobs.summary || {};
 
   el.innerHTML = `
     <div class="card">
-      <h2><span class="chip" data-thick="collision_gate">撞键已亮</span> 缺口补采队列</h2>
+      <h2>${gateChip(gate)} 缺口补采队列</h2>
       <p class="muted">对待补采/缺口访视行排队补采；执行成功会把载荷补齐、质量改合格并关闭关联质控发现。</p>
       <div class="grid">
         <div class="stat"><div class="n">${summary['排队'] || 0}</div><div class="l">排队</div></div>

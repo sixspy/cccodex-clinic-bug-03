@@ -1,17 +1,23 @@
 import { api, chip, escapeHtml } from '../api.js';
 
+const gateChip = (g) => g && g.aligned
+  ? `<span class="chip ok" data-thick="collision_gate">撞键已亮</span>`
+  : `<span class="chip bad" data-thick="collision_gate">镜像次数旧${g && g.landing_row == null ? '·无落点' : ''}</span>`;
+
 export async function renderSites(el) {
-  const [data, counts, protocols] = await Promise.all([
+  const [data, counts, protocols, dash] = await Promise.all([
     api('/api/sites'),
     api('/api/site-counts'),
     api('/api/protocols'),
+    api('/api/dashboard'),
   ]);
+  const gate = dash.collision_gate || {};
   const items = data.items || [];
   const activeProto = (protocols.items || []).find((p) => p.status === '生效');
 
   el.innerHTML = `
     <div class="card">
-      <h2><span class="chip" data-thick="collision_gate">撞键已亮</span> 试验中心目录</h2>
+      <h2>${gateChip(gate)} 试验中心目录</h2>
       <p class="muted">登记临床试验中心、启停状态与访视抓取配额。停用前须先结束采集中批次。</p>
       <div class="grid">
         <div class="stat"><div class="n">${counts.total || 0}</div><div class="l">中心总数</div></div>

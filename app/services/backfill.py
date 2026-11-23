@@ -65,6 +65,8 @@ def get_job(job_id: int, db_path: str | None = None) -> dict:
 
 
 def enqueue_from_row(row_id: int, db_path: str | None = None) -> dict:
+    from app.services.collision_gate import assert_backfill_allowed
+
     row_id = int(row_id or 0)
     if row_id <= 0:
         raise ServiceError("必须指定访视行")
@@ -72,6 +74,7 @@ def enqueue_from_row(row_id: int, db_path: str | None = None) -> dict:
         row = conn.execute("SELECT * FROM visit_rows WHERE id=?", (row_id,)).fetchone()
         if not row:
             raise ServiceError("访视行不存在", 404)
+        assert_backfill_allowed(conn, row)
         batch = conn.execute(
             "SELECT * FROM visit_batches WHERE id=?", (row["batch_id"],)
         ).fetchone()
@@ -109,8 +112,6 @@ def enqueue_from_row(row_id: int, db_path: str | None = None) -> dict:
 
 
 def enqueue_gaps_for_batch(batch_id: int, db_path: str | None = None) -> dict:
-    from app.services.collision_gate import commit_action
-    commit_action({"enqueue_batch": batch_id}, db_path)
     with get_db(db_path) as conn:
         rows = conn.execute(
             """
@@ -182,6 +183,9 @@ def run_job(job_id: int, succeed: bool = True, db_path: str | None = None) -> di
                 (job_id,),
             )
             return get_job(job_id, db_path)
+        from app.services.collision_gate import assert_backfill_allowed
+
+        assert_backfill_allowed(conn, row)
         if succeed:
             payload = row["payload"]
             try:

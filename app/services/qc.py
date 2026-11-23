@@ -4,6 +4,7 @@ import json
 
 from app.db import get_db
 from app.services import audit as audit_svc
+from app.services import collision_gate as gate
 from app.services.errors import ServiceError
 
 SEVERITIES = ("提示", "一般", "严重")
@@ -131,10 +132,11 @@ def scan_batch(batch_id: int, db_path: str | None = None) -> dict:
                 except json.JSONDecodeError:
                     pass
         rows = conn.execute(
-            """
-            SELECT * FROM visit_rows
-            WHERE batch_id=? AND quality!='合格' AND status IN ('待检','待补采')
-            ORDER BY id
+            f"""
+            SELECT r.* FROM visit_rows r
+            WHERE r.batch_id=? AND r.quality!='合格' AND r.status IN ('待检','待补采')
+              AND NOT {gate.MIRROR_COPY_SQL}
+            ORDER BY r.id
             """,
             (batch_id,),
         ).fetchall()

@@ -149,6 +149,11 @@ def seed_if_needed(db_path: str | None = None) -> None:
             (batch_ids[3], "S01-0103", "V3",
              json.dumps({"visit_date": "2026-11-12", "investigator": "赵医生", "weight_kg": 71}, ensure_ascii=False),
              "合格", "待检"),
+            # 同中心同键跨批成对落库：先落库者为原件，此处为镜像件
+            (batch_ids[3], "S01-0003", "V2", "", "编码空", "待检"),
+            (batch_ids[3], "S01-0002", "V1",
+             json.dumps({"visit_date": "", "investigator": "王医生"}, ensure_ascii=False),
+             "缺字段", "待检"),
         ]
         row_ids = []
         for bid, subject, visit, payload, quality, status in rows:

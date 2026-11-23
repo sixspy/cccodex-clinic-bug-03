@@ -2,7 +2,14 @@ from __future__ import annotations
 
 from app.db import get_db
 from app.services import audit as audit_svc
+from app.services import collision_gate as gate
 from app.services.errors import ServiceError
+
+# 真实缺口行：排除同中心同键后半件镜像；镜像件不得把缺口与发现数顶虚。
+_REAL_GAP_WHERE = """
+  r.quality!='合格' AND r.status IN ('待检','待补采')
+  AND NOT {mirror}
+""".format(mirror=gate.MIRROR_COPY_SQL)
 
 
 def dashboard(db_path: str | None = None) -> dict:
@@ -16,13 +23,14 @@ def dashboard(db_path: str | None = None) -> dict:
         batches = conn.execute("SELECT COUNT(*) AS c FROM visit_batches").fetchone()["c"]
         rows = conn.execute("SELECT COUNT(*) AS c FROM visit_rows").fetchone()["c"]
         gaps = conn.execute(
-            """
-            SELECT COUNT(*) AS c FROM visit_rows
-            WHERE quality!='合格' AND status IN ('待检','待补采')
-            """
+            f"SELECT COUNT(*) AS c FROM visit_rows r WHERE {_REAL_GAP_WHERE}"
         ).fetchone()["c"]
         findings = conn.execute(
-            "SELECT COUNT(*) AS c FROM qc_findings WHERE status='开放'"
+            f"""
+            SELECT COUNT(*) AS c FROM qc_findings f
+            JOIN visit_rows r ON r.id=f.row_id
+            WHERE f.status='开放' AND NOT {gate.MIRROR_COPY_SQL}
+            """
         ).fetchone()["c"]
         jobs = conn.execute(
             """
@@ -47,21 +55,45 @@ def dashboard(db_path: str | None = None) -> dict:
             "pending_jobs": jobs,
             "audits": audits,
             "batch_status": {r["status"]: r["c"] for r in by_batch_status},
+            "collision_gate": gate.reconcile_block(db_path),
             "collision_gate_audit": _collision_gate_audit(db_path),
         }
 
 
 def run_reconcile(db_path: str | None = None) -> dict:
     with get_db(db_path) as conn:
-        gap_rows = conn.execute(
+        gate_state = gate.reconcile_block(db_path)
+        mirror_rows = conn.execute(
+            f"SELECT COUNT(*) AS c FROM visit_rows r WHERE {gate.MIRROR_COPY_SQL}"
+        ).fetchone()["c"]
+        real_gap_rows = conn.execute(
+            f"SELECT COUNT(*) AS c FROM visit_rows r WHERE {_REAL_GAP_WHERE}"
+        ).fetchone()["c"]
+        gap_rows_naive = conn.execute(
             """
             SELECT COUNT(*) AS c FROM visit_rows
             WHERE quality!='合格' AND status IN ('待检','待补采')
             """
         ).fetchone()["c"]
-        open_findings = conn.execute(
+        open_findings_naive = conn.execute(
             "SELECT COUNT(*) AS c FROM qc_findings WHERE status='开放'"
         ).fetchone()["c"]
+        mirror_findings = conn.execute(
+            f"""
+            SELECT COUNT(*) AS c FROM qc_findings f
+            JOIN visit_rows r ON r.id=f.row_id
+            WHERE f.status='开放' AND {gate.MIRROR_COPY_SQL}
+            """
+        ).fetchone()["c"]
+        mirror_gap_rows = conn.execute(
+            f"""
+            SELECT COUNT(*) AS c FROM visit_rows r
+            WHERE r.quality!='合格' AND r.status IN ('待检','待补采')
+              AND {gate.MIRROR_COPY_SQL}
+            """
+        ).fetchone()["c"]
+        open_findings = open_findings_naive - mirror_findings
+        gap_rows = real_gap_rows
         pending_jobs = conn.execute(
             """
             SELECT COUNT(*) AS c FROM backfill_jobs
@@ -70,9 +102,9 @@ def run_reconcile(db_path: str | None = None) -> dict:
         ).fetchone()["c"]
         # rows needing backfill but without open finding
         orphan_gaps = conn.execute(
-            """
+            f"""
             SELECT COUNT(*) AS c FROM visit_rows r
-            WHERE r.quality!='合格' AND r.status IN ('待检','待补采')
+            WHERE {_REAL_GAP_WHERE}
               AND NOT EXISTS (
                 SELECT 1 FROM qc_findings f
                 WHERE f.row_id=r.id AND f.status='开放'
@@ -101,7 +133,8 @@ def run_reconcile(db_path: str | None = None) -> dict:
         mismatch = orphan_gaps + stale_findings + uncovered
         summary = (
             f"缺口行{gap_rows} · 开放发现{open_findings} · 待执行补采{pending_jobs} · "
-            f"无发现缺口{orphan_gaps} · 陈旧发现{stale_findings} · 未覆盖补采{uncovered}"
+            f"无发现缺口{orphan_gaps} · 陈旧发现{stale_findings} · 未覆盖补采{uncovered} · "
+            f"镜像件{mirror_rows}"
         )
         cur = conn.execute(
             """
@@ -119,13 +152,21 @@ def run_reconcile(db_path: str | None = None) -> dict:
             "orphan_gaps": orphan_gaps,
             "stale_findings": stale_findings,
             "uncovered_backfill": uncovered,
+            "real_gap_rows": real_gap_rows,
+            "gap_rows_naive": gap_rows_naive,
+            "mirror_rows": mirror_rows,
+            "mirror_gap_rows": mirror_gap_rows,
+            "mirror_rows_excluded": gap_rows + mirror_gap_rows == gap_rows_naive,
+            "mirror_findings": mirror_findings,
+            "open_findings_naive": open_findings_naive,
+            "collision_gate": gate_state,
             "gap_by_quality": [
                 dict(r)
                 for r in conn.execute(
-                    """
-                    SELECT quality, COUNT(*) AS c FROM visit_rows
-                    WHERE quality!='合格' AND status IN ('待检','待补采')
-                    GROUP BY quality
+                    f"""
+                    SELECT r.quality, COUNT(*) AS c FROM visit_rows r
+                    WHERE {_REAL_GAP_WHERE}
+                    GROUP BY r.quality
                     """
                 ).fetchall()
             ],
@@ -174,17 +215,26 @@ def get_report(report_id: int, db_path: str | None = None) -> dict:
 def site_gap_matrix(db_path: str | None = None) -> list[dict]:
     with get_db(db_path) as conn:
         rows = conn.execute(
-            """
+            f"""
             SELECT s.id, s.site_code, s.name, s.status,
-              COUNT(DISTINCT b.id) AS batch_count,
-              COUNT(r.id) AS row_count,
-              SUM(CASE WHEN r.quality!='合格' AND r.status IN ('待检','待补采') THEN 1 ELSE 0 END) AS gap_count,
-              SUM(CASE WHEN f.status='开放' THEN 1 ELSE 0 END) AS open_findings
+              (SELECT COUNT(*) FROM visit_batches b WHERE b.site_id=s.id) AS batch_count,
+              (SELECT COUNT(*) FROM visit_rows r
+                JOIN visit_batches b ON b.id=r.batch_id
+                WHERE b.site_id=s.id) AS row_count,
+              (SELECT COUNT(*) FROM visit_rows r
+                JOIN visit_batches b ON b.id=r.batch_id
+                WHERE b.site_id=s.id
+                  AND r.quality!='合格' AND r.status IN ('待检','待补采')
+                  AND NOT {gate.MIRROR_COPY_SQL}) AS gap_count,
+              (SELECT COUNT(*) FROM qc_findings f
+                JOIN visit_rows r ON r.id=f.row_id
+                JOIN visit_batches b ON b.id=r.batch_id
+                WHERE b.site_id=s.id AND f.status='开放'
+                  AND NOT {gate.MIRROR_COPY_SQL}) AS open_findings,
+              (SELECT COUNT(*) FROM visit_rows r
+                JOIN visit_batches b ON b.id=r.batch_id
+                WHERE b.site_id=s.id AND {gate.MIRROR_COPY_SQL}) AS mirror_count
             FROM trial_sites s
-            LEFT JOIN visit_batches b ON b.site_id=s.id
-            LEFT JOIN visit_rows r ON r.batch_id=b.id
-            LEFT JOIN qc_findings f ON f.row_id=r.id
-            GROUP BY s.id
             ORDER BY s.id
             """
         ).fetchall()

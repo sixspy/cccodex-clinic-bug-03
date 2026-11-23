@@ -1,16 +1,22 @@
 import { api, chip, escapeHtml } from '../api.js';
 
+const gateChip = (g) => g && g.aligned
+  ? `<span class="chip ok" data-thick="collision_gate">撞键已亮</span>`
+  : `<span class="chip bad" data-thick="collision_gate">镜像次数旧${g && g.landing_row == null ? '·无落点' : ''}</span>`;
+
 export async function renderQc(el) {
-  const [findings, batches] = await Promise.all([
+  const [findings, batches, dash] = await Promise.all([
     api('/api/findings'),
     api('/api/batches'),
+    api('/api/dashboard'),
   ]);
+  const gate = dash.collision_gate || {};
   const summary = findings.summary || {};
   const openBatches = (batches.items || []).filter((b) => b.status !== '已关闭');
 
   el.innerHTML = `
     <div class="card">
-      <h2><span class="chip" data-thick="collision_gate">撞键已亮</span> 字段质控发现</h2>
+      <h2>${gateChip(gate)} 字段质控发现</h2>
       <p class="muted">对缺口质量行扫描生成发现；缺字段/编码空/重复键会带严重度。关闭发现不自动改质量，补采成功后会联动关闭。</p>
       <div class="grid">
         <div class="stat"><div class="n">${summary.open || 0}</div><div class="l">开放发现</div></div>

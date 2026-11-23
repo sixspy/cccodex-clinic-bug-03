@@ -1,25 +1,30 @@
-"""撞键闸读轨审计：汇总切流账册与双写两轨两侧引用。"""
+"""撞键闸读轨审计（甲路）：汇总物化包落点行与对账页读轨块。
+
+乙路双写两轨脚手架已按择边拆除，此处只审计唯一读轨 cutover_book。
+"""
 from __future__ import annotations
 
 from app.db import get_db
+
+from app.services import collision_gate as gate
 from app.services.collision_gate_cutover import board as cutover_board
-from app.services.collision_gate_dualwrite import dual_board, half_dual
 
 
 def audit_list(db_path: str | None = None) -> list[dict]:
     with get_db(db_path) as conn:
         rows = conn.execute(
-            "SELECT key, value FROM meta WHERE key LIKE ? ORDER BY key",
-            ("collision_gate_evt_%",),
+            """
+            SELECT * FROM collision_gate_pins ORDER BY id
+            """
         ).fetchall()
-        return [{"key": r["key"], "value": r["value"]} for r in rows]
+        return [dict(r) for r in rows]
 
 
 def audit_summary(db_path: str | None = None) -> dict:
     return {
         "title": "撞键闸审计",
-        "events": audit_list(db_path),
+        "fate": gate._CUTOVER,
+        "pins": audit_list(db_path),
         "cutover": cutover_board(db_path),
-        "dualwrite": dual_board(db_path),
-        "half": half_dual(db_path),
+        "reconcile_block": gate.reconcile_block(db_path),
     }

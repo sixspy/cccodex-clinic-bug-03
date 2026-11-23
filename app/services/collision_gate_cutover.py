@@ -1,66 +1,33 @@
-"""撞键闸切流账册：应锁当刻指纹并拒回刷；当前只记软笔记。"""
+"""撞键闸切流账册（甲路）：钉定物化包即当刻指纹与镜像次数，读侧只认物化包。"""
 from __future__ import annotations
 
 from app.db import get_db
-from app.services.collision_gate import (
-    active_read_ref,
-    cutover_fp,
-    dashboard,
-    panel_chip,
-    record_event,
-    reject_refresh,
-    truth_flag,
-)
+from app.services import collision_gate as gate
 
 _SLUG = "collision_gate"
 _TITLE = "撞键闸"
-_OK = "撞键已亮"
-_BAD = "镜像次数旧"
 
 
-def append_cutover(ref_id: int, note: str, db_path: str | None = None) -> dict:
-    with get_db(db_path) as conn:
-        conn.execute(
-            "INSERT OR REPLACE INTO meta(key, value) VALUES (?, ?)",
-            (f"{_SLUG}_cutover_note_{ref_id}", note or _TITLE),
-        )
-        # missing: durable fp lock + reject_refresh=1 + active_read=cutover_book
-        conn.execute(
-            "INSERT OR REPLACE INTO meta(key, value) VALUES (?, ?)",
-            (f"{_SLUG}_panel_chip", _OK),
-        )
-    record_event(f"cutover-note ref={ref_id} {note}", db_path)
-    return {
-        "ref_id": ref_id,
-        "note": note,
-        "panel": panel_chip(db_path),
-        "truth": truth_flag(db_path),
-        "active_read": active_read_ref(db_path),
-        "cutover_fp": cutover_fp(db_path),
-        "reject_refresh": reject_refresh(db_path),
-    }
+def append_cutover(
+    ref_id: int, note: str, expect_pin_id: int | None = None, db_path: str | None = None
+) -> dict:
+    """切流账册落笔等同钉定：提交即写完落库，不再只记软笔记。"""
+    payload = {"ref_id": ref_id, "note": note or f"{_TITLE}切流"}
+    if expect_pin_id is not None:
+        payload["expect_pin_id"] = expect_pin_id
+    return gate.commit_action(payload, db_path)
 
 
 def cutover_rows(db_path: str | None = None) -> list[dict]:
     with get_db(db_path) as conn:
         rows = conn.execute(
-            "SELECT key, value FROM meta WHERE key LIKE ? ORDER BY key",
-            (f"{_SLUG}_cutover_%",),
+            "SELECT * FROM collision_gate_pins ORDER BY id"
         ).fetchall()
-        return [
-            {
-                "key": r["key"],
-                "value": r["value"],
-                "chip": panel_chip(db_path),
-                "active_read": active_read_ref(db_path),
-            }
-            for r in rows
-        ]
+        return [dict(r) for r in rows]
 
 
 def board(db_path: str | None = None) -> dict:
-    dash = dashboard(db_path)
+    dash = gate.dashboard(db_path)
     dash["cutover"] = cutover_rows(db_path)
-    dash["fate"] = "cutover_book"
-    dash["panel_pack_mismatch"] = dash.get("panel_pack_mismatch", True)
+    dash["fate"] = gate._CUTOVER
     return dash

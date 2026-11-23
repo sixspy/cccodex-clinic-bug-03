@@ -17,7 +17,6 @@ from app.services import reconcile as reconcile_svc
 from app.services import settings as settings_svc
 from app.services import collision_gate as collision_gate_svc
 from app.services import collision_gate_cutover as collision_gate_cutover_svc
-from app.services import collision_gate_dualwrite as collision_gate_dual_svc
 from app.services import sites as sites_svc
 from app.services import visits as visits_svc
 from app.services.errors import ServiceError
@@ -458,12 +457,6 @@ class Api:
 
     @cherrypy.expose
     @_wrap
-    def collision_gate_half(self):
-        _require()
-        return _json(collision_gate_svc.reconcile_display())
-
-    @cherrypy.expose
-    @_wrap
     def collision_gate_snap(self):
         _require()
         return _json(collision_gate_svc.snapshot())
@@ -477,15 +470,22 @@ class Api:
             collision_gate_cutover_svc.append_cutover(
                 int(body.get("ref_id") or 0),
                 str(body.get("note") or "撞键钉定"),
+                body.get("expect_pin_id"),
             )
         )
 
     @cherrypy.expose
     @_wrap
     def collision_gate_dual(self):
+        # 乙路已按择边拆除，读轨不并存
         _require()
-        body = _read_json()
-        return _json(collision_gate_dual_svc.apply_dualwrite(str(body.get("note") or "撞键钉定")))
+        return _json({"error": "撞键闸乙路（双写两轨）已拆除，读轨只认物化包"}, 410)
+
+    @cherrypy.expose
+    @_wrap
+    def collision_gate_refresh(self):
+        _require()
+        return _json(collision_gate_svc.refresh_old_track())
 
     @cherrypy.expose
     @_wrap
@@ -577,14 +577,14 @@ class ApiMount:
                 return api.collision_gate_dash()
             if action == "commit":
                 return api.collision_gate_commit()
-            if action == "half":
-                return api.collision_gate_half()
             if action == "snap":
                 return api.collision_gate_snap()
             if action == "cutover":
                 return api.collision_gate_cutover()
             if action == "dual":
                 return api.collision_gate_dual()
+            if action == "refresh":
+                return api.collision_gate_refresh()
             return _json({"error": "未知撞键钉定路由"}, 404)
 
         return _json({"error": f"未知接口 {path}"}, 404)

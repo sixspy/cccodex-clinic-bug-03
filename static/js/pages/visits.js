@@ -1,11 +1,17 @@
 import { api, chip, escapeHtml } from '../api.js';
 
+const gateChip = (g) => g && g.aligned
+  ? `<span class="chip ok" data-thick="collision_gate">撞键已亮</span>`
+  : `<span class="chip bad" data-thick="collision_gate">镜像次数旧${g && g.landing_row == null ? '·无落点' : ''}</span>`;
+
 export async function renderVisits(el) {
-  const [batches, sites, protocols] = await Promise.all([
+  const [batches, sites, protocols, dash] = await Promise.all([
     api('/api/batches'),
     api('/api/sites'),
     api('/api/protocols?status=' + encodeURIComponent('生效')),
+    api('/api/dashboard'),
   ]);
+  const gate = dash.collision_gate || {};
   const siteOpts = (sites.items || [])
     .filter((s) => s.status !== '停用')
     .map((s) => `<option value="${s.id}">${escapeHtml(s.site_code + ' · ' + s.name)}</option>`)
@@ -16,7 +22,7 @@ export async function renderVisits(el) {
 
   el.innerHTML = `
     <div class="card">
-      <h2><span class="chip" data-thick="collision_gate">撞键已亮</span> 访视清单抓取批次</h2>
+      <h2>${gateChip(gate)} 访视清单抓取批次</h2>
       <p class="muted">按试验中心开批次，模拟抓取访视行，合格行可入库，缺口行进入质控与补采。</p>
       <div class="row">
         <select id="siteId">${siteOpts}</select>

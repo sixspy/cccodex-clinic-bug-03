@@ -107,6 +107,16 @@ CREATE TABLE IF NOT EXISTS meta (
   key TEXT PRIMARY KEY,
   value TEXT NOT NULL
 );
+
+CREATE TABLE IF NOT EXISTS collision_gate_pins (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  mode TEXT NOT NULL,
+  fingerprint TEXT NOT NULL,
+  mirror_count INTEGER NOT NULL DEFAULT 0,
+  ref_id INTEGER NOT NULL DEFAULT 0,
+  note TEXT NOT NULL DEFAULT '',
+  created_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
 """
 
 
